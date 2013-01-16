@@ -6,6 +6,7 @@ DROP PROCEDURE IF EXISTS AddParentTableUnlessExists;
 DROP PROCEDURE IF EXISTS AddChildTableUnlessExists;
 DROP PROCEDURE IF EXISTS CreateParentTable;
 DROP PROCEDURE IF EXISTS CreateChildTable;
+DROP PROCEDURE IF EXISTS AddColumnUnlessExists;
 
 /* PROCEDURE CREATION */
 DELIMITER '//'
@@ -126,6 +127,87 @@ BEGIN
     THEN
         /* IT DOESN'T EXIST, SO WE CREATE IT */
         CALL CreateChildTable(dbName, parentTable, tableName);
+    END IF;
+END;
+
+/*
+ * ADDS AND POPULATES A COLUMN IF IT DOESN'T EXIST
+ * PARAM
+ * dbName: name of database
+ * tableName: name of table
+ * fieldName: column that will be added if it doesn't exist
+ * fieldDef: definition of the column that will be added
+ * default_value: default value that will populate the whole table for the column being added
+ */
+CREATE PROCEDURE AddColumnUnlessExists(
+    IN dbName           tinytext,
+    IN tableName        tinytext,
+    IN fieldName        tinytext,
+    IN fieldDef         text,
+    IN default_value    text,
+    IN incrementation   INT,
+    IN ignore_parent    INT)
+BEGIN
+    /* CHECK TO SEE IF COLUMN EXISTS */
+    IF NOT EXISTS   (
+                        SELECT * FROM information_schema.COLUMNS
+                            WHERE   column_name=fieldName
+                                AND table_name=tableName
+                                AND table_schema=dbName
+                    )
+    THEN
+        /* COLUMN DIDN'T EXIST, SO CREATE COLUMN CREATION QUERY */
+        SET @ddl=CONCAT('ALTER TABLE `',dbName,'`.`',tableName,'` ',
+                        'ADD COLUMN ',fieldName,' ',fieldDef,' ',default_value);
+        /* EXECUTE CREATION QUERY */
+        prepare stmt FROM @ddl;
+        EXECUTE stmt;
+        /* IF USER WANTS TO INCREMENT VALUES INSIDE A TABLE */
+        IF incrementation = 1
+            THEN
+            IF ignore_parent = 1
+            THEN
+                SET @ddl=CONCAT('UPDATE `',dbName,'`.`',tableName,'` AS `temp1` ',
+                                'JOIN ',
+                                '( ',
+                                '   SELECT DISTINCT(`',dbName,'`.`',tableName,'`.`',tableName,'_id`), ',
+                                '          @i:=@i+1 AS counter ',
+                                '   FROM `',dbName,'`.`',tableName,'`, ',
+                                '        ( ',
+                                '           SELECT @i:=',default_value,'-1 ',
+                                '        ) AS cnt ',
+                                ') AS `temp2` ',
+                                'ON  `temp1`.`',tableName,'_id` = `temp2`.`',tableName,'_id` ',
+                                'SET `temp1`.`',fieldName,'`    = `temp2`.`counter`;');
+                /* EXECUTE INSERTION QUERY */
+                prepare stmt FROM @ddl;
+                EXECUTE stmt;
+            ELSE
+                SET @ddl=CONCAT('UPDATE `',dbName,'`.`',tableName,'` AS `temp1` ',
+                                'JOIN ',
+                                '( ',
+                                '   SELECT DISTINCT(`',dbName,'`.`',tableName,'`.`',tableName,'_type`), ',
+                                '          @i:=@i+1 AS counter ',
+                                '   FROM `',dbName,'`.`',tableName,'`, ',
+                                '        ( ',
+                                '           SELECT @i:=',default_value,'-1 ',
+                                '        ) AS cnt ',
+                                '   GROUP BY `',dbName,'`.`',tableName,'`.`',tableName,'_type` ',
+                                ') AS `temp2` ',
+                                'ON  `temp1`.`',tableName,'_type`  = `temp2`.`',tableName,'_type` ',
+                                'SET `temp1`.`',fieldName,'`       = `temp2`.`counter`;');
+                /* EXECUTE INSERTION QUERY */
+                prepare stmt FROM @ddl;
+                EXECUTE stmt;
+            END IF;
+        ELSE
+            /* CREATE INSERTION QUERY */
+            SET @ddl=CONCAT('UPDATE `',dbName,'`.`',tableName,'` ',
+                            'SET ',fieldName,' = ',default_value);
+            /* EXECUTE INSERTION QUERY */
+            prepare stmt FROM @ddl;
+            EXECUTE stmt;
+        END IF;
     END IF;
 END;
 
