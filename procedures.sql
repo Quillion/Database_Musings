@@ -3,6 +3,7 @@ USE SOME_DATABASE;
 /* PROCEDURE RESET */
 DROP PROCEDURE IF EXISTS AddTableUnlessExists;
 DROP PROCEDURE IF EXISTS AddParentTableUnlessExists;
+DROP PROCEDURE IF EXISTS AddChildTableUnlessExists;
 DROP PROCEDURE IF EXISTS CreateParentTable;
 DROP PROCEDURE IF EXISTS CreateChildTable;
 
@@ -101,6 +102,30 @@ BEGIN
     THEN
         /* IT DOESN'T EXIST, SO WE CREATE IT */
         CALL CreateParentTable(dbName, tableName);
+    END IF;
+END;
+
+/*
+ * ADDS A DEPENDANT TABLE IF IT DOESN'T EXIST
+ * PARAMS
+ * dbName: name of database
+ * tableName: name of table name that will be created if it doesn't exist
+ * parentTable: name of parent table that the table depends on
+ */
+CREATE PROCEDURE AddChildTableUnlessExists(
+    IN dbName           tinytext,
+    IN parentTable      tinytext,
+    IN tableName        tinytext)
+BEGIN
+    /* CHECK TO SEE IF TABLE DOES NOT EXIST */
+    IF NOT EXISTS   (
+                        SELECT * FROM information_schema.TABLES
+                            WHERE   table_name = tableName
+                                AND table_schema = dbName
+                    )
+    THEN
+        /* IT DOESN'T EXIST, SO WE CREATE IT */
+        CALL CreateChildTable(dbName, parentTable, tableName);
     END IF;
 END;
 
