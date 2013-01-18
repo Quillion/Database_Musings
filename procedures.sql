@@ -8,6 +8,7 @@ DROP PROCEDURE IF EXISTS CreateParentTable;
 DROP PROCEDURE IF EXISTS CreateChildTable;
 DROP PROCEDURE IF EXISTS AddColumnUnlessExists;
 DROP PROCEDURE IF EXISTS RenameType;
+DROP PROCEDURE IF EXISTS PopulateParent;
 
 /* PROCEDURE CREATION */
 DELIMITER '//'
@@ -225,6 +226,40 @@ BEGIN
     /* EXECUTE UPDATE QUERY */
     prepare stmt FROM @ddl;
     EXECUTE stmt;
+END;
+
+//
+
+DELIMITER ';'
+
+DELIMITER //
+
+/*
+ * POPULATES THE PARENT TABLE (USUALLY PROFILE) WITH amount ENTRIES
+ * PARAM
+ * dbName: name of database
+ * tableName: name of table
+ * amount: amount of entries to insert into profile
+ */
+CREATE PROCEDURE PopulateParent(
+    IN dbName           tinytext,
+    IN tableName        tinytext,
+    IN amount           INT)
+BEGIN
+    /* COUNT HOW MANY ENTRIES EXIST CURRENTLY */
+    SET @current_amount := 1;
+    SET @ddl=CONCAT('SELECT COUNT(*) INTO @current_amount FROM `',dbName,'`.`',tableName,'`');
+    prepare stmt FROM @ddl;
+    EXECUTE stmt;
+    /* LOOP UNTIL POPULATED */
+    WHILE @current_amount < amount DO
+        SET @current_amount = @current_amount + 1;
+        SET @ddl=CONCAT('INSERT INTO `',dbName,'`.`',tableName,'`(',
+                        '`',tableName,'_type`) ',
+                        'VALUES(\'MAIN\')');
+        prepare stmt FROM @ddl;
+        EXECUTE stmt;
+    END WHILE;
 END;
 
 //
