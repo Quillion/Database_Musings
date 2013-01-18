@@ -7,6 +7,7 @@ DROP PROCEDURE IF EXISTS AddChildTableUnlessExists;
 DROP PROCEDURE IF EXISTS CreateParentTable;
 DROP PROCEDURE IF EXISTS CreateChildTable;
 DROP PROCEDURE IF EXISTS AddColumnUnlessExists;
+DROP PROCEDURE IF EXISTS RenameType;
 
 /* PROCEDURE CREATION */
 DELIMITER '//'
@@ -209,6 +210,21 @@ BEGIN
             EXECUTE stmt;
         END IF;
     END IF;
+END;
+
+CREATE PROCEDURE RenameType(
+    IN dbName           tinytext,
+    IN tableName        tinytext,
+    IN oldValue         text,
+    IN newValue         text)
+BEGIN
+    /* CREATE UPDATE QUERY */
+    SET @ddl=CONCAT('UPDATE `',dbName,'`.`',tableName,'` ',
+                        'SET ',tableName,'_type = \'',newValue,'\' ',
+                        'WHERE `',tableName,'_type` = \'',tableName,'_',oldValue,'\'');
+    /* EXECUTE UPDATE QUERY */
+    prepare stmt FROM @ddl;
+    EXECUTE stmt;
 END;
 
 //
