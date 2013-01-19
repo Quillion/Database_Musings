@@ -9,6 +9,7 @@ DROP PROCEDURE IF EXISTS CreateChildTable;
 DROP PROCEDURE IF EXISTS AddColumnUnlessExists;
 DROP PROCEDURE IF EXISTS RenameType;
 DROP PROCEDURE IF EXISTS PopulateParent;
+DROP PROCEDURE IF EXISTS PopulateChild;
 
 /* PROCEDURE CREATION */
 DELIMITER '//'
@@ -235,11 +236,11 @@ DELIMITER ';'
 DELIMITER //
 
 /*
- * POPULATES THE PARENT TABLE (USUALLY PROFILE) WITH amount ENTRIES
+ * POPULATES THE PARENT TABLE WITH amount ENTRIES
  * PARAM
  * dbName: name of database
  * tableName: name of table
- * amount: amount of entries to insert into profile
+ * amount: amount of entries to insert into parent table
  */
 CREATE PROCEDURE PopulateParent(
     IN dbName           tinytext,
@@ -260,6 +261,188 @@ BEGIN
         prepare stmt FROM @ddl;
         EXECUTE stmt;
     END WHILE;
+END;
+
+/*
+ * POPULATES A TABLE WITH ENTRIES DEPENDING ON WHAT ENTRIES PARENT HAS
+ * PARAM
+ * dbName: name of database
+ * tableName: name of table
+ * parentName: name of table that our table depends on
+ * amount: how many entries per instance of parent table to make
+ */
+CREATE PROCEDURE PopulateChild(
+    IN dbName           tinyText,
+    IN parentName       tinyText,
+    IN tableName        tinyText,
+    IN amount           INT)
+BEGIN
+    /* SOME INITIALIZERS */
+    SET @distinct_parent_elements := 1;
+    SET @total_parent_elements := 1;
+    SET @distinct_table_elements := 1;
+    SET @total_table_elements := 1;
+    SET @remainder_add := 1;
+    SET @row_number := 0;
+    SET @temp_one := 0;
+    SET @temp_two := 0;
+    SET @temp_three := 0;
+
+    /* DROP TEMP TABLES IF THEY EXIST */
+    SET @ddl=CONCAT('DROP TABLE IF EXISTS `',dbName,'`.`temp1`, `',dbName,'`.`temp2`, `',dbName,'`.`temp3`');
+    prepare stmt FROM @ddl;
+    EXECUTE stmt;
+
+    /* OBTAIN HOW MANY DISTINCT ELEMENTS PARENT TABLE HAS */
+    SET @ddl=CONCAT('SELECT COUNT(DISTINCT `',dbName,'`.`',parentName,'`.`',parentName,'_type`) INTO @distinct_parent_elements FROM `',dbName,'`.`',parentName,'`');
+    prepare stmt FROM @ddl;
+    EXECUTE stmt;
+
+    /* OBTAIN HOW MANY ELEMENTS PARENT TABLE HAS */
+    SET @ddl=CONCAT('SELECT COUNT(*) INTO @total_parent_elements FROM `',dbName,'`.`',parentName,'`');
+    prepare stmt FROM @ddl;
+    EXECUTE stmt;
+    SET @total_parent_elements := @total_parent_elements / @distinct_parent_elements;
+
+    /* OBTAIN HOW MANY DISTINCT ELEMENTS TABLE HAS */
+    SET @ddl=CONCAT('SELECT COUNT(DISTINCT `',dbName,'`.`',tableName,'`.`',tableName,'_type`) INTO @distinct_table_elements FROM `',dbName,'`.`',tableName,'`');
+    prepare stmt FROM @ddl;
+    EXECUTE stmt;
+
+    /* MAKE SURE WE DO NOT DIVIDE BY ZERO */
+    IF @distinct_table_elements = 0
+        THEN
+            SET @total_table_elements := 0;
+    ELSE
+        /* OBTAIN HOW MANY ELEMENTS TABLE HAS */
+        SET @ddl=CONCAT('SELECT COUNT(*) INTO @total_table_elements FROM `',dbName,'`.`',tableName,'`');
+        prepare stmt FROM @ddl;
+        EXECUTE stmt;
+        SET @total_table_elements := @total_table_elements / @distinct_table_elements;
+    END IF;
+
+    /* DROP TEMP TABLES IF THEY EXIST (CLEAN UP JUST IN CASE) */
+    SET @ddl=CONCAT('DROP TABLE IF EXISTS `',dbName,'`.`temp1`, `',dbName,'`.`temp2`');
+    prepare stmt FROM @ddl;
+    EXECUTE stmt;
+
+    /* OBTAIN ALL THE UNIQUE ELEMENT NAMES AND STORE THEM SO LATER ON WE CAN CYCLE THROUGH THEM */
+    /* PUT ALL THE UNIQUE NAME TYPES IN THE TABLE */
+    SET @ddl=CONCAT('CREATE TABLE `',dbName,'`.`temp2` SELECT DISTINCT`',dbName,'`.`',parentName,'`.`',parentName,'_type` FROM `',dbName,'`.`',parentName,'`');
+    prepare stmt FROM @ddl;
+    EXECUTE stmt;
+    /* ADD A COUNTER TO THEM */
+    SET @row_number := 0;
+    SET @ddl=CONCAT('CREATE TABLE `',dbName,'`.`temp1` SELECT @row_number := @row_number + 1 row_number, `',dbName,'`.`temp2`.* FROM `',dbName,'`.`temp2`');
+    prepare stmt FROM @ddl;
+    EXECUTE stmt;
+    /* CLEAN UP */
+    SET @ddl=CONCAT('DROP TABLE IF EXISTS `',dbName,'`.`temp2`');
+    prepare stmt FROM @ddl;
+    EXECUTE stmt;
+
+    /* QUICK INITIALIZATION */
+    SET @temp_one := 0;
+
+    /* WHILE LOOP THAT LOOPS AS MANY TIMES AS THERE ARE DISTINCT PARENTS */
+    WHILE @temp_one < @distinct_parent_elements DO
+        SET @temp_one := @temp_one + 1;
+
+        /* OBTAIN PARENT TYPE temp_one AND STORE IT IN current_type */
+        SET @current_type := 'NONE';
+        SET @ddl=CONCAT('SELECT ',
+                                 '`',parentName,'_type` ',
+                                        'INTO @current_type ',
+                            'FROM ',
+                                 '`',dbName,'`.`temp1` ',
+                            'WHERE ',
+                                 '`temp1`.`row_number` = ',@temp_one);
+        prepare stmt FROM @ddl;
+        EXECUTE stmt;
+
+        /* DROP TEMP TABLES IF THEY EXIST (CLEAN UP JUST IN CASE) */
+        SET @ddl=CONCAT('DROP TABLE IF EXISTS `',dbName,'`.`temp2`, `',dbName,'`.`temp3`');
+        prepare stmt FROM @ddl;
+        EXECUTE stmt;
+
+        /* OBTAIN ALL THE PARENT ROWS THAT ARE LINKED WITH A CERTAIN TYPE */
+        SET @ddl=CONCAT('CREATE TABLE `',dbName,'`.`temp3` ',
+                            'SELECT ',
+                                 '`',dbName,'`.`',parentName,'`.`',parentName,'_id`, ',
+                                 '`',dbName,'`.`',parentName,'`.`',parentName,'_type` ',
+                            'FROM ',
+                                 '`',dbName,'`.`',parentName,'` ',
+                            'WHERE ',
+                                 '`',parentName,'`.`',parentName,'_type` = \'',@current_type,'\'');
+        prepare stmt FROM @ddl;
+        EXECUTE stmt;
+        /* ADD A COUNTER TO THEM */
+        SET @row_number := 0;
+        SET @ddl=CONCAT('CREATE TABLE `',dbName,'`.`temp2` SELECT @row_number := @row_number + 1 row_number, `',dbName,'`.`temp3`.* FROM `',dbName,'`.`temp3`');
+        prepare stmt FROM @ddl;
+        EXECUTE stmt;
+        /* CLEAN UP */
+        SET @ddl=CONCAT('DROP TABLE IF EXISTS `',dbName,'`.`temp3`');
+        prepare stmt FROM @ddl;
+        EXECUTE stmt;
+
+        SET @temp_two := 0;
+
+        /* LOOP AS MANY TIMES AS THERE ARE ELEMENTS IN THE PARENT */
+        WHILE @temp_two < @total_parent_elements DO
+            SET @temp_two := @temp_two + 1;
+
+            /* OBTAIN ID OF THE PARENT THAT HAS TYPE current_type */
+            SET @id_number := 0;
+            SET @ddl=CONCAT('SELECT ',
+                                     '`temp2`.`',parentName,'_id` ',
+                                            'INTO @id_number ',
+                                'FROM ',
+                                     '`',dbName,'`.`temp2` ',
+                                'WHERE ',
+                                     '`temp2`.`row_number` = ',@temp_two);
+            prepare stmt FROM @ddl;
+            EXECUTE stmt;
+
+            /* SEE IF THE CHILD HAS THE LINKING TO PARENT */
+            SET @existance := 0;
+            SET @ddl=CONCAT('SELECT ',
+                                     'COUNT(*) ',
+                                            'INTO @existance ',
+                                'FROM ',
+                                     '`',dbName,'`.`',tableName,'` ',
+                                'WHERE ',
+                                     '`',tableName,'`.`',tableName,'_',parentName,'_id` = ',@id_number);
+            prepare stmt FROM @ddl;
+            EXECUTE stmt;
+
+            /* IF WE HAVE LESS INSTANCES PER ENTRY THAN NEEDED */
+            IF @existance < amount
+                THEN
+                    /* LOOP UNTIL WE HAVE AS MANY INSTANCES PER PARENT TABLE ROW AS NEEDED */
+                    WHILE @existance < amount DO
+                        SET @existance := @existance + 1;
+
+                        SET @ddl=CONCAT('INSERT INTO `',dbName,'`.`',tableName,'` (',
+                                                    '`',tableName,'_',parentName,'_id`, '
+                                                    '`',tableName,'_type`) ',
+                                        'VALUES( ',
+                                                    '\'',@id_number,'\', ',
+                                                    '\'',tableName,'_',@existance,'\')');
+                        prepare stmt FROM @ddl;
+                        EXECUTE stmt;
+                    END WHILE;
+            END IF;
+
+        END WHILE;
+
+    END WHILE;
+
+    /* DROP TEMP TABLES IF THEY EXIST */
+    SET @ddl=CONCAT('DROP TABLE IF EXISTS `',dbName,'`.`temp1`, `',dbName,'`.`temp2`, `',dbName,'`.`temp3`');
+    prepare stmt FROM @ddl;
+    EXECUTE stmt;
+
 END;
 
 //
